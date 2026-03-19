@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Overview — Pharmacovigilance Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-title">Pharmacovigilance Dashboard</div>
+<div class="page-sub">FAERS adverse event data for 6 mental-health medications · openFDA · E2B(R3)-aligned schema</div>
+
+<!-- KPIs -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="label">Total reports</div>
+    <div class="value">{{ kpis.total_reports or '—' }}</div>
+    <div class="sub">across all 6 drugs</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Serious events</div>
+    <div class="value">{{ kpis.serious_reports or '—' }}</div>
+    <div class="sub">{{ kpis.pct_serious or '—' }}% of all reports</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Death outcomes</div>
+    <div class="value">{{ kpis.death_reports or '—' }}</div>
+    <div class="sub">seriousnessdeath = 1</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Drugs tracked</div>
+    <div class="value">6</div>
+    <div class="sub">Stimulants · Benzo · SSRI · Antipsychotic</div>
+  </div>
+</div>
+
+<!-- Overview bar chart -->
+<div class="chart-card">
+  <div id="overview-bar"></div>
+</div>
+
+<!-- Heatmap -->
+<div class="chart-card">
+  <div id="heatmap"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  renderChart('overview-bar', {{ overview_bar | tojson }});
+  renderChart('heatmap',      {{ heatmap      | tojson }});
+</script>
+{% endblock %}

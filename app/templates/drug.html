@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} — Pharmacovigilance Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-title">{{ label }}</div>
+<div class="page-sub">Adverse event deep dive · FAERS via openFDA</div>
+
+<!-- KPIs -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="label">Total reports</div>
+    <div class="value">{{ kpis.total_reports or '—' }}</div>
+    <div class="sub">primary suspect reports</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Serious events</div>
+    <div class="value">{{ kpis.serious_reports or '—' }}</div>
+    <div class="sub">{{ kpis.pct_serious or '—' }}% of reports</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Death outcomes</div>
+    <div class="value">{{ kpis.death_reports or '—' }}</div>
+    <div class="sub">fatal seriousness flag</div>
+  </div>
+</div>
+
+<!-- Top reactions + sex breakdown -->
+<div class="chart-grid-2">
+  <div class="chart-card">
+    <div id="bar-chart"></div>
+  </div>
+  <div class="chart-card">
+    <div id="sex-chart"></div>
+  </div>
+</div>
+
+<!-- Time series -->
+<div class="chart-card">
+  <div id="time-chart"></div>
+</div>
+
+<!-- Co-medications -->
+<div class="chart-card">
+  <div id="comed-chart"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  renderChart('bar-chart',   {{ bar_chart   | tojson }});
+  renderChart('sex-chart',   {{ sex_chart   | tojson }});
+  renderChart('time-chart',  {{ time_chart  | tojson }});
+  renderChart('comed-chart', {{ comed_chart | tojson }});
+</script>
+{% endblock %}

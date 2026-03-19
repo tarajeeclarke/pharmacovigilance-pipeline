@@ -1,0 +1,8 @@
+flask==3.0.3
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.30
+python-dotenv==1.0.1
+requests==2.32.3
+pandas==2.2.2
+plotly==5.22.0
+gunicorn==22.0.0
