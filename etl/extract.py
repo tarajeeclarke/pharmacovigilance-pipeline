@@ -31,12 +31,12 @@ log = logging.getLogger(__name__)
 # Target drugs — brand name used for API query, generic stored too
 # ------------------------------------------------------------------
 DRUGS = [
-    {"brand": "adderall",    "generic": "amphetamine"},
-    {"brand": "ritalin",     "generic": "methylphenidate"},
-    {"brand": "xanax",       "generic": "alprazolam"},
-    {"brand": "lexapro",     "generic": "escitalopram"},
-    {"brand": "olanzapine",  "generic": "olanzapine"},
-    {"brand": "seroquel",    "generic": "quetiapine"},
+    {"brand": "adderall",     "generic": "amphetamine"},
+    {"brand": "methylphenidate", "generic": "methylphenidate"},
+    {"brand": "alprazolam",   "generic": "alprazolam"},
+    {"brand": "escitalopram", "generic": "escitalopram"},
+    {"brand": "olanzapine",   "generic": "olanzapine"},
+    {"brand": "quetiapine",   "generic": "quetiapine"},
 ]
 
 BASE_URL   = "https://api.fda.gov/drug/event.json"
@@ -45,10 +45,10 @@ MAX_PAGES  = 10      # 10 pages × 100 = 1,000 reports per drug (adjust up for p
 RAW_DIR    = Path(__file__).parent.parent / "data" / "raw"
 
 
-def _build_params(drug_name: str, skip: int) -> dict:
-    """Build openFDA query params for a drug name."""
+def _build_params(drug_name: str, generic: str, skip: int) -> dict:
+    """Build openFDA query params using both brand and generic name fields."""
     params = {
-        "search": f'patient.drug.medicinalproduct:"{drug_name}"+AND+patient.drug.drugcharacterization:"1"',
+        "search": f'patient.drug.openfda.brand_name:"{drug_name}"+patient.drug.openfda.generic_name:"{generic}"',
         "limit": PAGE_SIZE,
         "skip":  skip,
     }
@@ -58,26 +58,26 @@ def _build_params(drug_name: str, skip: int) -> dict:
     return params
 
 
-def _fetch_page(drug_name: str, skip: int, retries: int = 3) -> list[dict]:
+def _fetch_page(drug: dict, skip: int, retries: int = 3) -> list[dict]:
     """Fetch one page of results. Retries on 429 (rate limit)."""
-    params = _build_params(drug_name, skip)
+    params = _build_params(drug["brand"], drug["generic"], skip)
     for attempt in range(1, retries + 1):
         try:
             resp = requests.get(BASE_URL, params=params, timeout=30)
             if resp.status_code == 200:
                 return resp.json().get("results", [])
             elif resp.status_code == 404:
-                log.warning(f"No results for {drug_name} at skip={skip}")
+                log.warning(f"No results for {drug['brand']} at skip={skip}")
                 return []
             elif resp.status_code == 429:
                 wait = 2 ** attempt
                 log.warning(f"Rate limited. Waiting {wait}s (attempt {attempt}/{retries})")
                 time.sleep(wait)
             else:
-                log.error(f"HTTP {resp.status_code} for {drug_name}: {resp.text[:200]}")
+                log.error(f"HTTP {resp.status_code} for {drug['brand']}: {resp.text[:200]}")
                 return []
         except requests.RequestException as e:
-            log.error(f"Request error for {drug_name}: {e}")
+            log.error(f"Request error for {drug['brand']}: {e}")
             if attempt == retries:
                 return []
             time.sleep(2)
@@ -85,24 +85,19 @@ def _fetch_page(drug_name: str, skip: int, retries: int = 3) -> list[dict]:
 
 
 def extract_drug(drug: dict) -> list[dict]:
-    """
-    Extract all pages for one drug.
-    Returns a flat list of raw FAERS report dicts.
-    """
-    brand   = drug["brand"]
+    brand = drug["brand"]
     all_results = []
 
     log.info(f"Extracting: {brand}")
     for page in range(MAX_PAGES):
         skip    = page * PAGE_SIZE
-        results = _fetch_page(brand, skip)
+        results = _fetch_page(drug, skip)
         if not results:
             break
         all_results.extend(results)
-        log.info(f"  {brand}: page {page + 1} — {len(results)} records (total so far: {len(all_results)})")
-        time.sleep(0.25)   # polite delay between pages
+        log.info(f"  {brand}: page {page + 1} — {len(results)} records (total: {len(all_results)})")
+        time.sleep(0.25)
 
-    # Save raw JSON for reproducibility / debugging
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RAW_DIR / f"{brand}_raw.json"
     with open(out_path, "w") as f:

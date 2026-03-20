@@ -1,31 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Overview — Pharmacovigilance Dashboard{% endblock %}
+{% block title %}Overview — PharmaVigil{% endblock %}
 
 {% block content %}
-<div class="page-title">Pharmacovigilance Dashboard</div>
-<div class="page-sub">FAERS adverse event data for 6 mental-health medications · openFDA · E2B(R3)-aligned schema</div>
+<div class="page-header">
+  <div>
+    <div class="page-title">Adverse event overview</div>
+    <div class="page-sub">FAERS · openFDA · E2B(R3)-aligned · 6 drugs tracked</div>
+  </div>
+  <div class="live-badge">
+    <div class="live-dot"></div>Live data
+  </div>
+</div>
 
-<!-- KPIs -->
+<!-- KPI cards -->
 <div class="kpi-row">
-  <div class="kpi-card">
+  <div class="kpi-card k-teal">
     <div class="label">Total reports</div>
     <div class="value">{{ kpis.total_reports or '—' }}</div>
     <div class="sub">across all 6 drugs</div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card k-amber">
     <div class="label">Serious events</div>
     <div class="value">{{ kpis.serious_reports or '—' }}</div>
     <div class="sub">{{ kpis.pct_serious or '—' }}% of all reports</div>
   </div>
-  <div class="kpi-card">
-    <div class="label">Death outcomes</div>
+  <div class="kpi-card k-red">
+    <div class="label">Fatal outcomes</div>
     <div class="value">{{ kpis.death_reports or '—' }}</div>
     <div class="sub">seriousnessdeath = 1</div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card k-blue">
     <div class="label">Drugs tracked</div>
     <div class="value">6</div>
-    <div class="sub">Stimulants · Benzo · SSRI · Antipsychotic</div>
+    <div class="sub">Stimulants · Benzo · SSRI · AP</div>
   </div>
 </div>
 
