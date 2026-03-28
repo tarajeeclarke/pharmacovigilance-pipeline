@@ -5,42 +5,59 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{% block title %}Pharmacovigilance Dashboard{% endblock %}</title>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0a0e17;
-      --surface:  #111827;
-      --surface2: #1a2235;
-      --border:   #1e2d45;
-      --text:     #e2e8f0;
-      --muted:    #64748b;
-      --accent:   #00d4aa;
-      --warn:     #f59e0b;
-      --danger:   #ef4444;
-      --info:     #3b82f6;
+      --bg:       #120a0e;
+      --surface:  #1a0e14;
+      --surface2: #22131a;
+      --border:   rgba(255,180,210,0.08);
+      --border-solid: #3a1a28;
+      --text:     #f5e6ed;
+      --muted:    #9c7a88;
+      --accent:   #ff6eb0;
+      --accent2:  #ffb3d1;
+      --warn:     #ffb347;
+      --danger:   #ff4f4f;
+      --info:     #b3d1ff;
+      --card-bg:  rgba(255,110,176,0.03);
     }
 
     body {
-      font-family: 'Syne', sans-serif;
+      font-family: 'DM Sans', sans-serif;
       background: var(--bg);
       color: var(--text);
       font-size: 14px;
+      font-weight: 300;
+    }
+
+    /* ── Noise texture overlay ───────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.4;
     }
 
     /* ── Layout ─────────────────────────────── */
     .layout {
       display: grid;
-      grid-template-columns: 210px 1fr;
+      grid-template-columns: 220px 1fr;
       min-height: 100vh;
+      position: relative;
+      z-index: 1;
     }
 
     /* ── Sidebar ─────────────────────────────── */
     .sidebar {
       background: var(--surface);
       border-right: 1px solid var(--border);
-      padding: 20px 0;
+      padding: 24px 0;
       position: sticky;
       top: 0;
       height: 100vh;
@@ -54,27 +71,42 @@
     }
 
     .sidebar-brand .logo {
-      font-size: 10px;
-      letter-spacing: .15em;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
       color: var(--muted);
       text-transform: uppercase;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
 
     .sidebar-brand .name {
-      font-size: 17px;
+      font-family: 'Playfair Display', serif;
+      font-size: 1.3rem;
       font-weight: 700;
       color: var(--accent);
-      letter-spacing: -.02em;
+      letter-spacing: -0.02em;
+      font-style: italic;
     }
 
     .nav-label {
-      font-size: 10px;
-      letter-spacing: .12em;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.18em;
       color: var(--muted);
       text-transform: uppercase;
       padding: 0 20px;
-      margin: 14px 0 6px;
+      margin: 16px 0 6px;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .nav-label::before {
+      content: '';
+      width: 1rem;
+      height: 1px;
+      background: var(--accent);
+      opacity: 0.5;
     }
 
     .sidebar a {
@@ -82,30 +114,33 @@
       align-items: center;
       gap: 8px;
       padding: 8px 20px;
-      font-size: 13px;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
       color: var(--muted);
       text-decoration: none;
       border-left: 2px solid transparent;
-      transition: all .15s;
+      transition: all 0.15s;
     }
 
     .sidebar a:hover {
       color: var(--text);
-      background: var(--surface2);
+      background: rgba(255,110,176,0.04);
     }
 
     .sidebar a.active {
       color: var(--accent);
       border-left-color: var(--accent);
-      background: rgba(0, 212, 170, .06);
+      background: rgba(255,110,176,0.06);
     }
 
     .nav-dot {
-      width: 5px;
-      height: 5px;
+      width: 4px;
+      height: 4px;
       border-radius: 50%;
       background: currentColor;
       flex-shrink: 0;
+      opacity: 0.6;
     }
 
     .sidebar-divider {
@@ -115,38 +150,61 @@
     }
 
     /* ── Main content ─────────────────────────── */
-    .main { padding: 32px; }
+    .main { padding: 36px 32px; }
 
     .page-header {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      margin-bottom: 28px;
+      margin-bottom: 32px;
+    }
+
+    .page-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--accent);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .page-label::before {
+      content: '';
+      width: 1.5rem;
+      height: 1px;
+      background: var(--accent);
     }
 
     .page-title {
-      font-size: 22px;
+      font-family: 'Playfair Display', serif;
+      font-size: 1.8rem;
       font-weight: 700;
-      letter-spacing: -.03em;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
       margin-bottom: 4px;
     }
 
     .page-sub {
-      font-size: 12px;
+      font-size: 0.82rem;
       color: var(--muted);
+      margin-top: 4px;
     }
 
     .live-badge {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 5px 12px;
+      gap: 6px;
+      padding: 6px 14px;
       border-radius: 20px;
-      font-size: 11px;
+      font-size: 0.65rem;
       font-family: 'DM Mono', monospace;
-      background: rgba(0, 212, 170, .08);
+      letter-spacing: 0.08em;
+      background: rgba(255,110,176,0.08);
       color: var(--accent);
-      border: 1px solid rgba(0, 212, 170, .2);
+      border: 1px solid rgba(255,110,176,0.25);
     }
 
     .live-dot {
@@ -159,7 +217,7 @@
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50%       { opacity: .25; }
+      50%       { opacity: 0.25; }
     }
 
     /* ── KPI cards ─────────────────────────────── */
@@ -171,12 +229,18 @@
     }
 
     .kpi-card {
-      background: var(--surface);
+      background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 8px;
       padding: 18px 16px;
       position: relative;
       overflow: hidden;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .kpi-card:hover {
+      border-color: rgba(255,110,176,0.25);
+      background: rgba(255,110,176,0.05);
     }
 
     .kpi-card::before {
@@ -186,44 +250,71 @@
       height: 2px;
     }
 
-    .kpi-card.k-teal::before  { background: var(--accent); }
+    .kpi-card.k-pink::before  { background: var(--accent); }
     .kpi-card.k-amber::before { background: var(--warn); }
     .kpi-card.k-red::before   { background: var(--danger); }
-    .kpi-card.k-blue::before  { background: var(--info); }
+    .kpi-card.k-soft::before  { background: var(--accent2); }
 
     .kpi-card .label {
-      font-size: 10px;
-      letter-spacing: .1em;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
       color: var(--muted);
       margin-bottom: 10px;
     }
 
     .kpi-card .value {
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -.03em;
       font-family: 'DM Mono', monospace;
+      font-size: 1.8rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
     }
 
-    .kpi-card.k-teal  .value { color: var(--accent); }
+    .kpi-card.k-pink  .value { color: var(--accent); }
     .kpi-card.k-amber .value { color: var(--warn); }
     .kpi-card.k-red   .value { color: var(--danger); }
-    .kpi-card.k-blue  .value { color: var(--info); }
+    .kpi-card.k-soft  .value { color: var(--accent2); }
 
     .kpi-card .sub {
-      font-size: 11px;
+      font-size: 0.72rem;
       color: var(--muted);
       margin-top: 5px;
+      line-height: 1.5;
     }
 
     /* ── Chart cards ─────────────────────────────── */
     .chart-card {
-      background: var(--surface);
+      background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 8px;
       padding: 20px;
       margin-bottom: 16px;
+      transition: border-color 0.2s;
+    }
+
+    .chart-card:hover {
+      border-color: rgba(255,110,176,0.2);
+    }
+
+    .chart-title {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .chart-title::before {
+      content: '';
+      width: 0.8rem;
+      height: 1px;
+      background: var(--accent);
+      opacity: 0.5;
     }
 
     .chart-grid-2 {
@@ -233,8 +324,57 @@
       margin-bottom: 16px;
     }
 
+    /* ── Table styles ─────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.75rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    tr:hover td {
+      background: rgba(255,110,176,0.03);
+    }
+
+    /* ── Pill badges ─────────────────────────── */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.06em;
+    }
+
+    .pill-pink   { background: rgba(255,110,176,0.12); color: var(--accent); }
+    .pill-amber  { background: rgba(255,179,71,0.12);  color: var(--warn); }
+    .pill-red    { background: rgba(255,79,79,0.12);   color: var(--danger); }
+    .pill-soft   { background: rgba(255,179,209,0.1);  color: var(--accent2); }
+
     /* ── Plotly overrides ─────────────────────── */
     .js-plotly-plot .plotly .bg { fill: transparent !important; }
+
+    /* ── Scrollbar ───────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border-solid); border-radius: 2px; }
 
     /* ── Responsive ─────────────────────────────── */
     @media (max-width: 900px) {
@@ -285,7 +425,7 @@
 function renderChart(divId, jsonStr) {
   if (!jsonStr || jsonStr === '{}') {
     document.getElementById(divId).innerHTML =
-      '<p style="color:var(--muted);padding:20px;font-size:13px">No data — run the ETL pipeline first.</p>';
+      '<p style="color:var(--muted);padding:20px;font-size:13px;font-family:\'DM Mono\',monospace;">No data — run the ETL pipeline first.</p>';
     return;
   }
   const fig = JSON.parse(jsonStr);
@@ -293,15 +433,16 @@ function renderChart(divId, jsonStr) {
   const darkLayout = {
     paper_bgcolor: 'transparent',
     plot_bgcolor:  'transparent',
-    font:          { color: '#e2e8f0', family: 'DM Mono, monospace', size: 12 },
-    xaxis:         { gridcolor: '#1e2d45', linecolor: '#1e2d45', zerolinecolor: '#1e2d45' },
-    yaxis:         { gridcolor: '#1e2d45', linecolor: '#1e2d45', zerolinecolor: '#1e2d45' },
-    legend:        { bgcolor: 'transparent' },
+    font:          { color: '#f5e6ed', family: 'DM Mono, monospace', size: 11 },
+    xaxis:         { gridcolor: 'rgba(255,180,210,0.08)', linecolor: 'rgba(255,180,210,0.08)', zerolinecolor: 'rgba(255,180,210,0.08)', tickfont: { color: '#9c7a88' } },
+    yaxis:         { gridcolor: 'rgba(255,180,210,0.08)', linecolor: 'rgba(255,180,210,0.08)', zerolinecolor: 'rgba(255,180,210,0.08)', tickfont: { color: '#9c7a88' } },
+    legend:        { bgcolor: 'transparent', font: { color: '#9c7a88' } },
+    colorway:      ['#ff6eb0', '#ffb3d1', '#ff9ecc', '#ff4fa0', '#ffcce5', '#e05090'],
   };
 
   fig.layout = Object.assign({}, fig.layout, darkLayout);
-  if (fig.layout.xaxis) fig.layout.xaxis = Object.assign({}, darkLayout.xaxis, fig.layout.xaxis, { gridcolor: '#1e2d45', linecolor: '#1e2d45' });
-  if (fig.layout.yaxis) fig.layout.yaxis = Object.assign({}, darkLayout.yaxis, fig.layout.yaxis, { gridcolor: '#1e2d45', linecolor: '#1e2d45' });
+  if (fig.layout.xaxis) fig.layout.xaxis = Object.assign({}, darkLayout.xaxis, fig.layout.xaxis, { gridcolor: 'rgba(255,180,210,0.08)', linecolor: 'rgba(255,180,210,0.08)' });
+  if (fig.layout.yaxis) fig.layout.yaxis = Object.assign({}, darkLayout.yaxis, fig.layout.yaxis, { gridcolor: 'rgba(255,180,210,0.08)', linecolor: 'rgba(255,180,210,0.08)' });
 
   Plotly.newPlot(divId, fig.data, fig.layout, { responsive: true, displayModeBar: false });
 }

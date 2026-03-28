@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+{% block title %}Overview — PharmaVigilance{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-label">Dashboard</div>
+    <div class="page-title">Adverse Event Overview</div>
+    <div class="page-sub">FAERS · openFDA · E2B(R3)-aligned · 6 drugs tracked</div>
+  </div>
+  <div class="live-badge">
+    <div class="live-dot"></div>Live data
+  </div>
+</div>
+
+<!-- KPI cards -->
+<div class="kpi-row">
+  <div class="kpi-card k-pink">
+    <div class="label">Total Reports</div>
+    <div class="value">{{ kpis.total_reports or '—' }}</div>
+    <div class="sub">across all 6 drugs</div>
+  </div>
+  <div class="kpi-card k-amber">
+    <div class="label">Serious Events</div>
+    <div class="value">{{ kpis.serious_reports or '—' }}</div>
+    <div class="sub">{{ kpis.pct_serious or '—' }}% of all reports</div>
+  </div>
+  <div class="kpi-card k-red">
+    <div class="label">Fatal Outcomes</div>
+    <div class="value">{{ kpis.death_reports or '—' }}</div>
+    <div class="sub">seriousnessdeath = 1</div>
+  </div>
+  <div class="kpi-card k-soft">
+    <div class="label">Drugs Tracked</div>
+    <div class="value">6</div>
+    <div class="sub">Stimulants · Benzo · SSRI · AP</div>
+  </div>
+</div>
+
+<!-- Signal summary cards — one per drug -->
+<div class="section-label-row">
+  <div class="section-heading">Signal Summary by Drug</div>
+</div>
+<div class="drug-signal-grid">
+  {% for drug in drug_summary %}
+  <a href="/drug/{{ drug.slug }}" class="drug-signal-card">
+    <div class="drug-signal-name">{{ drug.name }}</div>
+    <div class="drug-signal-class">{{ drug.drug_class }}</div>
+    <div class="drug-signal-stats">
+      <div class="dsstat">
+        <div class="dsstat-value">{{ drug.total_reports }}</div>
+        <div class="dsstat-label">Reports</div>
+      </div>
+      <div class="dsstat">
+        <div class="dsstat-value" style="color:var(--warn)">{{ drug.pct_serious }}%</div>
+        <div class="dsstat-label">Serious</div>
+      </div>
+      <div class="dsstat">
+        <div class="dsstat-value" style="color:var(--danger)">{{ drug.deaths }}</div>
+        <div class="dsstat-label">Fatal</div>
+      </div>
+    </div>
+    <div class="drug-signal-top">
+      <span class="dsstat-label">Top reaction:</span>
+      <span class="drug-top-reaction">{{ drug.top_reaction }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- Bottom row: Top 5 drugs + Top 10 reactions + Recent reports -->
+<div class="overview-bottom-grid">
+
+  <!-- Top 5 most reported drugs -->
+  <div class="chart-card">
+    <div class="chart-title">Top 5 Most Reported Drugs</div>
+    <div class="ranked-list">
+      {% for item in top_drugs %}
+      <div class="ranked-item">
+        <div class="rank-number">{{ loop.index }}</div>
+        <div class="rank-body">
+          <div class="rank-name">{{ item.drug }}</div>
+          <div class="rank-bar-wrap">
+            <div class="rank-bar" style="width:{{ item.pct }}%"></div>
+          </div>
+        </div>
+        <div class="rank-count">{{ item.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Top 10 most common reactions -->
+  <div class="chart-card">
+    <div class="chart-title">Top 10 Most Common Reactions</div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Reaction</th>
+          <th>Reports</th>
+          <th>% of Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in top_reactions %}
+        <tr>
+          <td style="color:var(--muted)">{{ loop.index }}</td>
+          <td>{{ r.reaction }}</td>
+          <td style="color:var(--accent);font-family:'DM Mono',monospace;">{{ r.count }}</td>
+          <td><span class="pill pill-pink">{{ r.pct }}%</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Recent reports feed -->
+  <div class="chart-card">
+    <div class="chart-title">Recent Adverse Event Reports</div>
+    <div class="feed-list">
+      {% for event in recent_reports %}
+      <div class="feed-item">
+        <div class="feed-top">
+          <span class="feed-drug">{{ event.drug }}</span>
+          <span class="feed-date">{{ event.date }}</span>
+        </div>
+        <div class="feed-reaction">{{ event.reaction }}</div>
+        <div class="feed-tags">
+          {% if event.serious %}
+          <span class="pill pill-amber">Serious</span>
+          {% endif %}
+          {% if event.fatal %}
+          <span class="pill pill-red">Fatal</span>
+          {% endif %}
+          {% if event.outcome %}
+          <span class="pill pill-soft">{{ event.outcome }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .section-label-row { margin: 28px 0 14px; }
+  .section-heading {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .section-heading::before {
+    content: '';
+    width: 1.5rem;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  .drug-signal-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .drug-signal-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-decoration: none;
+    color: var(--text);
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .drug-signal-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .drug-signal-card:hover {
+    border-color: rgba(255,110,176,0.3);
+    background: rgba(255,110,176,0.05);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  .drug-signal-card:hover::before { opacity: 1; }
+
+  .drug-signal-name {
+    font-family: 'Playfair Display', serif;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .drug-signal-class {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: -6px;
+  }
+
+  .drug-signal-stats { display: flex; gap: 16px; }
+
+  .dsstat { display: flex; flex-direction: column; gap: 2px; }
+
+  .dsstat-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--accent);
+  }
+
+  .dsstat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.58rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .drug-signal-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+  }
+
+  .drug-top-reaction { color: var(--accent2); font-style: italic; }
+
+  .overview-bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 16px;
+    margin-top: 4px;
+  }
+
+  .ranked-list { display: flex; flex-direction: column; gap: 14px; }
+
+  .ranked-item { display: flex; align-items: center; gap: 12px; }
+
+  .rank-number {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent);
+    opacity: 0.6;
+    width: 16px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+
+  .rank-body { flex: 1; }
+
+  .rank-name {
+    font-size: 0.8rem;
+    color: var(--text);
+    margin-bottom: 5px;
+    text-transform: capitalize;
+  }
+
+  .rank-bar-wrap {
+    height: 4px;
+    background: rgba(255,110,176,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .rank-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+  }
+
+  .rank-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    width: 40px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .feed-list { display: flex; flex-direction: column; }
+
+  .feed-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .feed-item:last-child { border-bottom: none; }
+
+  .feed-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .feed-drug {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--accent);
+    text-transform: capitalize;
+    letter-spacing: 0.05em;
+  }
+
+  .feed-date {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+  }
+
+  .feed-reaction { font-size: 0.8rem; color: var(--text); line-height: 1.4; }
+
+  .feed-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+
+  @media (max-width: 1100px) {
+    .drug-signal-grid { grid-template-columns: repeat(2, 1fr); }
+    .overview-bottom-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 700px) {
+    .drug-signal-grid { grid-template-columns: 1fr; }
+    .overview-bottom-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}

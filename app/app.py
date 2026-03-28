@@ -41,13 +41,13 @@ DRUG_LABELS = {
 }
 
 CHART_COLORS = {
-    "primary":   "#00d4aa",
-    "secondary": "#3b82f6",
-    "warning":   "#f59e0b",
-    "danger":    "#ef4444",
+    "primary":   "#ff6eb0",
+    "secondary": "#ffb3d1",
+    "warning":   "#ffb347",
+    "danger":    "#ff4f4f",
     "bg":        "rgba(0,0,0,0)",
-    "font":      "#e2e8f0",
-    "grid":      "#1e2d45",
+    "font":      "#f5e6ed",
+    "grid":      "rgba(255,180,210,0.08)",
 }
 
 
@@ -342,14 +342,102 @@ def chart_overview_bar():
 # Routes
 # ------------------------------------------------------------------
 @app.route("/")
+def get_drug_summary():
+    summary = []
+    for slug in DRUGS:
+        kpis = get_kpis(slug)
+        top_rxn = get_top_reactions(slug, limit=1)
+        top_reaction = top_rxn[0]["reaction_term"].title() if top_rxn else "—"
+        label = DRUG_LABELS.get(slug, slug)
+        name = label.split("(")[0].strip()
+        drug_class = label.split("(")[1].replace(")", "").strip() if "(" in label else ""
+        summary.append({
+            "slug":          slug,
+            "name":          name,
+            "drug_class":    drug_class,
+            "total_reports": int(kpis.get("total_reports") or 0),
+            "pct_serious":   float(kpis.get("pct_serious") or 0),
+            "deaths":        int(kpis.get("death_reports") or 0),
+            "top_reaction":  top_reaction,
+        })
+    return summary
+
+
+def get_top_drugs(drug_summary, n=5):
+    sorted_drugs = sorted(drug_summary, key=lambda x: x["total_reports"], reverse=True)[:n]
+    max_count = sorted_drugs[0]["total_reports"] if sorted_drugs else 1
+    return [{
+        "drug":  d["name"],
+        "count": d["total_reports"],
+        "pct":   round(d["total_reports"] / max_count * 100, 1),
+    } for d in sorted_drugs]
+
+
+def get_top_reactions_all(limit=10):
+    rows = query("""
+        SELECT rx.reaction_term, COUNT(*) AS n
+        FROM reactions rx
+        JOIN reports r ON r.id = rx.report_id
+        JOIN drugs d   ON d.report_id = r.id
+        WHERE d.drug_role = '1'
+          AND rx.reaction_term IS NOT NULL
+        GROUP BY rx.reaction_term
+        ORDER BY n DESC
+        LIMIT %s
+    """, (limit,))
+    total_row = query("SELECT COUNT(DISTINCT id) AS n FROM reports")
+    total = total_row[0]["n"] if total_row else 1
+    return [{
+        "reaction": r["reaction_term"].title(),
+        "count":    int(r["n"]),
+        "pct":      round(r["n"] / total * 100, 2),
+    } for r in rows]
+
+
+def get_recent_reports(limit=8):
+    rows = query("""
+        SELECT
+            d.medicinal_product  AS drug,
+            rx.reaction_term     AS reaction,
+            r.receipt_date       AS date,
+            r.serious            AS serious,
+            r.serious_death      AS fatal,
+            p.patient_outcome    AS outcome
+        FROM reports r
+        JOIN drugs d      ON d.report_id = r.id AND d.drug_role = '1'
+        JOIN reactions rx ON rx.report_id = r.id
+        LEFT JOIN patients p ON p.report_id = r.id
+        WHERE r.receipt_date IS NOT NULL
+          AND rx.reaction_term IS NOT NULL
+          AND d.medicinal_product IS NOT NULL
+        ORDER BY r.receipt_date DESC
+        LIMIT %s
+    """, (limit,))
+    return [{
+        "drug":     r["drug"].title() if r["drug"] else "—",
+        "reaction": r["reaction"].title() if r["reaction"] else "—",
+        "date":     str(r["date"])[:10] if r["date"] else "—",
+        "serious":  bool(r["serious"]),
+        "fatal":    bool(r["fatal"]),
+        "outcome":  r["outcome"].title() if r.get("outcome") else None,
+    } for r in rows]
+
+
+@app.route("/")
 def overview():
+    drug_summary   = get_drug_summary()
+    top_drugs      = get_top_drugs(drug_summary)
+    top_reactions  = get_top_reactions_all()
+    recent_reports = get_recent_reports()
     return render_template(
-        "overview.html",
+        "index.html",
         kpis=get_kpis(),
         drugs=DRUGS,
         drug_labels=DRUG_LABELS,
-        overview_bar=chart_overview_bar(),
-        heatmap=chart_heatmap(),
+        drug_summary=drug_summary,
+        top_drugs=top_drugs,
+        top_reactions=top_reactions,
+        recent_reports=recent_reports,
     )
 
 
