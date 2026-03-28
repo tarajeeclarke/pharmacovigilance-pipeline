@@ -3,19 +3,6 @@ etl/transform_load.py
 ---------------------
 Transforms raw openFDA JSON into relational rows and loads them
 into the PostgreSQL schema defined in db/schema.sql.
-
-Transform steps:
-  1. Flatten nested JSON (patient → drugs → reactions)
-  2. Deduplicate on safetyreportid
-  3. Normalize drug names (lowercase, strip whitespace)
-  4. Standardize dates to ISO format
-  5. Validate age (flag negatives / implausible values)
-  6. Map coded fields to human-readable labels
-
-Load steps:
-  - Upsert reports (skip duplicates already in DB)
-  - Insert patients, drugs, reactions with FK references
-  - Log each run to etl_runs table
 """
 
 import os
@@ -34,55 +21,37 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------
-# Lookup tables for coded fields
-# ------------------------------------------------------------------
-DRUG_ROLE_MAP = {
-    "1": "suspect",
-    "2": "concomitant",
-    "3": "interacting",
-}
-
-REPORTER_MAP = {
-    "1": "physician",
-    "2": "pharmacist",
-    "3": "other_hcp",
-    "5": "consumer",
-}
-
+DRUG_ROLE_MAP = {"1": "suspect", "2": "concomitant", "3": "interacting"}
+REPORTER_MAP  = {"1": "physician", "2": "pharmacist", "3": "other_hcp", "5": "consumer"}
 REACTION_OUTCOME_MAP = {
-    "1": "recovered",
-    "2": "recovering",
-    "3": "not_recovered",
-    "4": "fatal",
-    "5": "unknown",
-    "6": "recovered_with_sequelae",
+    "1": "recovered", "2": "recovering", "3": "not_recovered",
+    "4": "fatal", "5": "unknown", "6": "recovered_with_sequelae",
 }
+SEX_MAP = {"0": "unknown", "1": "male", "2": "female"}
 
-SEX_MAP = {
-    "0": "unknown",
-    "1": "male",
-    "2": "female",
-}
 
-# ------------------------------------------------------------------
-# Database connection
-# ------------------------------------------------------------------
 def get_connection():
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        from urllib.parse import urlparse
+        r = urlparse(database_url)
+        return psycopg2.connect(
+            host=r.hostname, port=r.port or 5432,
+            dbname=r.path[1:], user=r.username, password=r.password,
+            sslmode="require",
+        )
     return psycopg2.connect(
-        host     = os.getenv("DB_HOST", "localhost"),
-        port     = int(os.getenv("DB_PORT", 5432)),
-        dbname   = os.getenv("DB_NAME", "pharmacovigilance"),
-        user     = os.getenv("DB_USER"),
-        password = os.getenv("DB_PASSWORD"),
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", 5432)),
+        dbname=os.getenv("DB_NAME", "pharmacovigilance"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
     )
 
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-def _parse_date(raw: str | None) -> date | None:
-    """Parse openFDA date strings (YYYYMMDD or YYYY-MM-DD) to date."""
+def _parse_date(raw):
     if not raw:
         return None
     raw = str(raw).strip()
@@ -94,59 +63,48 @@ def _parse_date(raw: str | None) -> date | None:
     return None
 
 
-def _safe_float(val) -> float | None:
+def _safe_float(val):
     try:
         f = float(val)
-        return f if f >= 0 else None   # reject negatives
+        return f if f >= 0 else None
     except (TypeError, ValueError):
         return None
 
 
-def _normalize_drug_name(name: str | None) -> str | None:
+def _normalize_drug_name(name):
     if not name:
         return None
     return re.sub(r'\s+', ' ', name.strip().lower())
 
 
-def _flag(val) -> bool | None:
-    """Convert openFDA 1/2 flags to True/False (1=yes, 2=no)."""
+def _flag(val):
     if val is None:
         return None
     return str(val) == "1"
 
 
-# ------------------------------------------------------------------
-# Transform: flatten one raw report dict → structured rows
-# ------------------------------------------------------------------
-def transform_report(raw: dict, drug_brand: str) -> dict | None:
-    """
-    Returns a dict with keys: report, patient, drugs, reactions
-    or None if the report should be skipped (e.g. missing ID).
-    """
+def transform_report(raw, drug_brand):
     safety_id = raw.get("safetyreportid")
     if not safety_id:
         return None
 
-    # --- Report-level fields ---
     report = {
-        "safety_report_id":       str(safety_id),
-        "receipt_date":           _parse_date(raw.get("receiptdate")),
-        "receive_date":           _parse_date(raw.get("receivedate")),
-        "serious":                _flag(raw.get("serious")),
-        "serious_death":          _flag(raw.get("seriousnessdeath")),
-        "serious_hospitalization":_flag(raw.get("seriousnesshospitalization")),
-        "serious_lifethreat":     _flag(raw.get("seriousnesslifethreatening")),
-        "serious_disability":     _flag(raw.get("seriousnessdisabling")),
-        "serious_congenital":     _flag(raw.get("seriousnesscongenitalanomali")),
-        "serious_other":          _flag(raw.get("seriousnessother")),
-        "reporter_country":       raw.get("occurcountry"),
-        "reporter_qualification": REPORTER_MAP.get(
-                                      str(raw.get("primarysource", {}).get("qualification", "")),
-                                      None),
-        "outcome":                raw.get("patient", {}).get("patientdeath", {}).get("patientdeathdate"),
+        "safety_report_id":        str(safety_id),
+        "receipt_date":            _parse_date(raw.get("receiptdate")),
+        "receive_date":            _parse_date(raw.get("receivedate")),
+        "serious":                 _flag(raw.get("serious")),
+        "serious_death":           _flag(raw.get("seriousnessdeath")),
+        "serious_hospitalization": _flag(raw.get("seriousnesshospitalization")),
+        "serious_lifethreat":      _flag(raw.get("seriousnesslifethreatening")),
+        "serious_disability":      _flag(raw.get("seriousnessdisabling")),
+        "serious_congenital":      _flag(raw.get("seriousnesscongenitalanomali")),
+        "serious_other":           _flag(raw.get("seriousnessother")),
+        "reporter_country":        raw.get("occurcountry"),
+        "reporter_qualification":  REPORTER_MAP.get(
+            str(raw.get("primarysource", {}).get("qualification", "")), None),
+        "outcome": raw.get("patient", {}).get("patientdeath", {}).get("patientdeathdate"),
     }
 
-    # --- Patient demographics ---
     pt = raw.get("patient", {})
     patient = {
         "age_years": _safe_float(pt.get("patientonsetage")),
@@ -154,7 +112,6 @@ def transform_report(raw: dict, drug_brand: str) -> dict | None:
         "weight_kg": _safe_float(pt.get("patientweight")),
     }
 
-    # --- Drugs ---
     raw_drugs = pt.get("drug", [])
     if isinstance(raw_drugs, dict):
         raw_drugs = [raw_drugs]
@@ -165,15 +122,14 @@ def transform_report(raw: dict, drug_brand: str) -> dict | None:
         drugs.append({
             "medicinal_product": d.get("medicinalproduct"),
             "generic_name":      _normalize_drug_name(
-                                     d.get("openfda", {}).get("generic_name", [None])[0]
-                                     or d.get("medicinalproduct")),
+                d.get("openfda", {}).get("generic_name", [None])[0]
+                or d.get("medicinalproduct")),
             "manufacturer_name": d.get("openfda", {}).get("manufacturer_name", [None])[0],
             "drug_role":         role_code,
             "drug_role_label":   DRUG_ROLE_MAP.get(role_code, "unknown"),
             "indication":        d.get("drugindication"),
         })
 
-    # --- Reactions ---
     raw_reactions = pt.get("reaction", [])
     if isinstance(raw_reactions, dict):
         raw_reactions = [raw_reactions]
@@ -185,25 +141,12 @@ def transform_report(raw: dict, drug_brand: str) -> dict | None:
             "outcome":       REACTION_OUTCOME_MAP.get(str(r.get("reactionoutcome", "")), None),
         })
 
-    return {
-        "report":    report,
-        "patient":   patient,
-        "drugs":     drugs,
-        "reactions": reactions,
-    }
+    return {"report": report, "patient": patient, "drugs": drugs, "reactions": reactions}
 
 
-# ------------------------------------------------------------------
-# Load: insert one transformed report into Postgres
-# ------------------------------------------------------------------
-def load_report(cur, transformed: dict, etl_run_id: int) -> bool:
-    """
-    Insert report + patient + drugs + reactions.
-    Returns True if inserted, False if duplicate (skipped).
-    """
+def load_report(cur, transformed, etl_run_id):
     report = transformed["report"]
 
-    # Upsert report — skip if safetyreportid already exists
     cur.execute("""
         INSERT INTO reports (
             safety_report_id, receipt_date, receive_date,
@@ -222,18 +165,16 @@ def load_report(cur, transformed: dict, etl_run_id: int) -> bool:
 
     row = cur.fetchone()
     if not row:
-        return False   # duplicate — skipped
+        return False
 
     report_id = row[0]
 
-    # Patient
     p = transformed["patient"]
     cur.execute("""
         INSERT INTO patients (report_id, age_years, sex, weight_kg)
         VALUES (%s, %s, %s, %s)
     """, (report_id, p["age_years"], p["sex"], p["weight_kg"]))
 
-    # Drugs
     if transformed["drugs"]:
         execute_values(cur, """
             INSERT INTO drugs
@@ -241,16 +182,10 @@ def load_report(cur, transformed: dict, etl_run_id: int) -> bool:
                  drug_role, drug_role_label, indication)
             VALUES %s
         """, [(
-            report_id,
-            d["medicinal_product"],
-            d["generic_name"],
-            d["manufacturer_name"],
-            d["drug_role"],
-            d["drug_role_label"],
-            d["indication"],
+            report_id, d["medicinal_product"], d["generic_name"],
+            d["manufacturer_name"], d["drug_role"], d["drug_role_label"], d["indication"],
         ) for d in transformed["drugs"]])
 
-    # Reactions
     if transformed["reactions"]:
         execute_values(cur, """
             INSERT INTO reactions (report_id, reaction_term, outcome)
@@ -261,84 +196,75 @@ def load_report(cur, transformed: dict, etl_run_id: int) -> bool:
     return True
 
 
-# ------------------------------------------------------------------
-# Orchestrate: transform + load all records for one drug
-# ------------------------------------------------------------------
-def transform_load_drug(raw_records: list[dict], drug_brand: str) -> dict:
-    """
-    Full ETL for one drug.
-    Returns stats dict: {extracted, loaded, skipped, errors}
-    """
-    conn = get_connection()
+def transform_load_drug(raw_records, drug_brand):
     stats = {"extracted": len(raw_records), "loaded": 0, "skipped": 0, "errors": 0}
 
+    log_conn = get_connection()
+    log_conn.autocommit = True
+    with log_conn.cursor() as log_cur:
+        log_cur.execute("""
+            INSERT INTO etl_runs (drug_name, endpoint, rows_extracted, status)
+            VALUES (%s, %s, %s, 'started')
+            RETURNING id
+        """, (drug_brand, "/drug/event", len(raw_records)))
+        etl_run_id = log_cur.fetchone()[0]
+
+    conn = get_connection()
+    seen_ids = set()
+
     try:
-        with conn:
-            with conn.cursor() as cur:
-                # Open ETL run log entry
-                cur.execute("""
-                    INSERT INTO etl_runs (drug_name, endpoint, rows_extracted, status)
-                    VALUES (%s, %s, %s, 'started')
-                    RETURNING id
-                """, (drug_brand, "/drug/event", len(raw_records)))
-                etl_run_id = cur.fetchone()[0]
+        for raw in raw_records:
+            try:
+                transformed = transform_report(raw, drug_brand)
+                if not transformed:
+                    stats["skipped"] += 1
+                    continue
 
-                # Process each report
-                seen_ids = set()
-                for raw in raw_records:
-                    try:
-                        transformed = transform_report(raw, drug_brand)
-                        if not transformed:
-                            stats["skipped"] += 1
-                            continue
+                sid = transformed["report"]["safety_report_id"]
+                if sid in seen_ids:
+                    stats["skipped"] += 1
+                    continue
+                seen_ids.add(sid)
 
-                        sid = transformed["report"]["safety_report_id"]
-                        if sid in seen_ids:
-                            stats["skipped"] += 1
-                            continue
-                        seen_ids.add(sid)
-
+                with conn:
+                    with conn.cursor() as cur:
                         inserted = load_report(cur, transformed, etl_run_id)
                         if inserted:
                             stats["loaded"] += 1
                         else:
                             stats["skipped"] += 1
 
-                    except Exception as e:
-                        log.warning(f"Error on report: {e}")
-                        stats["errors"] += 1
-
-                # Close ETL run log entry
-                cur.execute("""
-                    UPDATE etl_runs
-                    SET rows_loaded   = %s,
-                        rows_skipped  = %s,
-                        status        = 'complete',
-                        completed_at  = NOW()
-                    WHERE id = %s
-                """, (stats["loaded"], stats["skipped"], etl_run_id))
-
-    except Exception as e:
-        log.error(f"Fatal ETL error for {drug_brand}: {e}")
-        stats["errors"] += 1
+            except Exception as e:
+                conn.rollback()
+                log.warning("Error on report: %s", e)
+                stats["errors"] += 1
     finally:
         conn.close()
 
-    log.info(f"{drug_brand}: loaded={stats['loaded']} skipped={stats['skipped']} errors={stats['errors']}")
+    with log_conn.cursor() as log_cur:
+        log_cur.execute("""
+            UPDATE etl_runs
+            SET rows_loaded = %s, rows_skipped = %s,
+                status = 'complete', completed_at = NOW()
+            WHERE id = %s
+        """, (stats["loaded"], stats["skipped"], etl_run_id))
+    log_conn.close()
+
+    log.info("%(d)s: loaded=%(l)s skipped=%(s)s errors=%(e)s", {
+        "d": drug_brand, "l": stats["loaded"],
+        "s": stats["skipped"], "e": stats["errors"]
+    })
     return stats
 
 
-# ------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------
-def run_full_etl(extracted_data: dict[str, list[dict]]):
-    """Run transform+load for all drugs. Pass output of extract.extract_all()."""
+def run_full_etl(extracted_data):
     total = {"loaded": 0, "skipped": 0, "errors": 0}
     for brand, records in extracted_data.items():
         stats = transform_load_drug(records, brand)
         for k in ("loaded", "skipped", "errors"):
             total[k] += stats[k]
-    log.info(f"ETL complete — total loaded: {total['loaded']} | skipped: {total['skipped']} | errors: {total['errors']}")
+    log.info("ETL complete - loaded: %s skipped: %s errors: %s",
+             total["loaded"], total["skipped"], total["errors"])
     return total
 
 

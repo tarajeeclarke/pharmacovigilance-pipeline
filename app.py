@@ -2,15 +2,12 @@
 app/app.py
 ----------
 Flask + Plotly dashboard for pharmacovigilance analytics.
+Production-ready for Render deployment.
 
 Routes:
   /                  → overview (all drugs, KPI cards)
   /drug/<name>       → drug-specific deep dive
-  /api/data/<name>   → JSON endpoint for chart data (useful for future JS clients)
-
-Run locally:
-    cd app
-    python app.py
+  /api/data/<name>   → JSON endpoint for chart data
 """
 
 import os
@@ -22,10 +19,18 @@ import plotly.express as px
 from plotly.utils import PlotlyJSONEncoder
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 load_dotenv()
 
-app = Flask(__name__)
+# ------------------------------------------------------------------
+# App setup — template path works both locally and on Render
+# ------------------------------------------------------------------
+app = Flask(
+    __name__,
+    template_folder=os.path.join(os.path.dirname(__file__), "templates"),
+)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 DRUGS = ["adderall", "ritalin", "xanax", "lexapro", "olanzapine", "seroquel"]
 
@@ -39,9 +44,25 @@ DRUG_LABELS = {
 }
 
 # ------------------------------------------------------------------
-# DB helpers
+# DB connection — supports both individual vars and DATABASE_URL
+# (Render PostgreSQL provides DATABASE_URL automatically)
 # ------------------------------------------------------------------
 def get_db():
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        # Render provides postgres:// — psycopg2 needs postgresql://
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        result = urlparse(database_url)
+        return psycopg2.connect(
+            host     = result.hostname,
+            port     = result.port or 5432,
+            dbname   = result.path[1:],
+            user     = result.username,
+            password = result.password,
+            sslmode  = "require",
+        )
+    # Fall back to individual env vars (local development)
     return psycopg2.connect(
         host     = os.getenv("DB_HOST", "localhost"),
         port     = int(os.getenv("DB_PORT", 5432)),
@@ -49,6 +70,7 @@ def get_db():
         user     = os.getenv("DB_USER"),
         password = os.getenv("DB_PASSWORD"),
     )
+
 
 def query(sql: str, params=None) -> list[dict]:
     conn = get_db()
@@ -63,8 +85,7 @@ def query(sql: str, params=None) -> list[dict]:
 # ------------------------------------------------------------------
 # Data queries
 # ------------------------------------------------------------------
-def get_kpis(drug_name: str | None = None) -> dict:
-    """Return top-line KPIs, optionally filtered by drug."""
+def get_kpis(drug_name=None):
     base_filter = ""
     params = []
     if drug_name:
@@ -88,7 +109,7 @@ def get_kpis(drug_name: str | None = None) -> dict:
     return rows[0] if rows else {}
 
 
-def get_report_counts_by_drug() -> list[dict]:
+def get_report_counts_by_drug():
     return query("""
         SELECT
             d.generic_name,
@@ -102,11 +123,9 @@ def get_report_counts_by_drug() -> list[dict]:
     """)
 
 
-def get_top_reactions(drug_name: str, limit: int = 15) -> list[dict]:
+def get_top_reactions(drug_name, limit=15):
     return query("""
-        SELECT
-            rx.reaction_term,
-            COUNT(*) AS n
+        SELECT rx.reaction_term, COUNT(*) AS n
         FROM reactions rx
         JOIN reports r ON r.id = rx.report_id
         JOIN drugs d   ON d.report_id = r.id
@@ -119,7 +138,7 @@ def get_top_reactions(drug_name: str, limit: int = 15) -> list[dict]:
     """, (f"%{drug_name}%", f"%{drug_name}%", limit))
 
 
-def get_serious_by_reporter(drug_name: str) -> list[dict]:
+def get_serious_by_reporter(drug_name):
     return query("""
         SELECT
             COALESCE(r.reporter_qualification, 'unknown') AS reporter,
@@ -134,7 +153,7 @@ def get_serious_by_reporter(drug_name: str) -> list[dict]:
     """, (f"%{drug_name}%", f"%{drug_name}%"))
 
 
-def get_reports_over_time(drug_name: str) -> list[dict]:
+def get_reports_over_time(drug_name):
     return query("""
         SELECT
             DATE_TRUNC('quarter', r.receipt_date) AS quarter,
@@ -149,8 +168,7 @@ def get_reports_over_time(drug_name: str) -> list[dict]:
     """, (f"%{drug_name}%", f"%{drug_name}%"))
 
 
-def get_comeds(drug_name: str, limit: int = 12) -> list[dict]:
-    """Concomitant drugs — the co-medication interaction map."""
+def get_comeds(drug_name, limit=12):
     return query("""
         SELECT
             d2.generic_name   AS co_drug,
@@ -168,7 +186,7 @@ def get_comeds(drug_name: str, limit: int = 12) -> list[dict]:
     """, (f"%{drug_name}%", f"%{drug_name}%", limit))
 
 
-def get_sex_distribution(drug_name: str) -> list[dict]:
+def get_sex_distribution(drug_name):
     return query("""
         SELECT
             COALESCE(p.sex, 'unknown') AS sex,
@@ -182,8 +200,7 @@ def get_sex_distribution(drug_name: str) -> list[dict]:
     """, (f"%{drug_name}%", f"%{drug_name}%"))
 
 
-def get_reaction_heatmap() -> list[dict]:
-    """Top 10 reactions × all 6 drugs for heatmap."""
+def get_reaction_heatmap():
     return query("""
         WITH top_reactions AS (
             SELECT reaction_term, COUNT(*) AS n
@@ -193,17 +210,12 @@ def get_reaction_heatmap() -> list[dict]:
             ORDER BY n DESC
             LIMIT 10
         )
-        SELECT
-            d.generic_name,
-            rx.reaction_term,
-            COUNT(*) AS n
+        SELECT d.generic_name, rx.reaction_term, COUNT(*) AS n
         FROM reactions rx
         JOIN reports r ON r.id = rx.report_id
         JOIN drugs d   ON d.report_id = r.id
         JOIN top_reactions tr ON tr.reaction_term = rx.reaction_term
         WHERE d.drug_role = '1'
-          AND d.generic_name IN ('amphetamine','methylphenidate','alprazolam',
-                                  'escitalopram','olanzapine','quetiapine')
         GROUP BY d.generic_name, rx.reaction_term
     """)
 
@@ -211,7 +223,33 @@ def get_reaction_heatmap() -> list[dict]:
 # ------------------------------------------------------------------
 # Chart builders
 # ------------------------------------------------------------------
-def chart_bar_reactions(drug_name: str) -> str:
+CHART_COLORS = {
+    "primary":   "#00d4aa",
+    "secondary": "#3b82f6",
+    "warning":   "#f59e0b",
+    "danger":    "#ef4444",
+    "bg":        "rgba(0,0,0,0)",
+    "paper":     "rgba(0,0,0,0)",
+    "font":      "#e2e8f0",
+    "grid":      "#1e2d45",
+}
+
+def _dark_layout(title="", height=380, margin=None):
+    return dict(
+        title       = dict(text=title, font=dict(color=CHART_COLORS["font"], size=13)),
+        paper_bgcolor = CHART_COLORS["paper"],
+        plot_bgcolor  = CHART_COLORS["bg"],
+        font          = dict(color=CHART_COLORS["font"], family="DM Mono, monospace", size=11),
+        height        = height,
+        margin        = margin or dict(l=60, r=20, t=50, b=40),
+        xaxis         = dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
+                             zerolinecolor=CHART_COLORS["grid"]),
+        yaxis         = dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
+                             zerolinecolor=CHART_COLORS["grid"]),
+    )
+
+
+def chart_bar_reactions(drug_name):
     rows = get_top_reactions(drug_name)
     if not rows:
         return "{}"
@@ -219,43 +257,38 @@ def chart_bar_reactions(drug_name: str) -> str:
         x=[r["n"] for r in rows],
         y=[r["reaction_term"] for r in rows],
         orientation="h",
-        marker_color="#6366f1",
+        marker_color=CHART_COLORS["primary"],
     ))
-    fig.update_layout(
+    fig.update_layout(**_dark_layout(
         title=f"Top adverse reactions — {DRUG_LABELS.get(drug_name, drug_name)}",
-        xaxis_title="Report count",
-        yaxis=dict(autorange="reversed"),
-        margin=dict(l=220, r=20, t=50, b=40),
         height=420,
-        template="plotly_white",
-    )
+        margin=dict(l=220, r=20, t=50, b=40),
+    ))
+    fig.update_layout(yaxis=dict(autorange="reversed"))
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def chart_time_series(drug_name: str) -> str:
+def chart_time_series(drug_name):
     rows = get_reports_over_time(drug_name)
     if not rows:
         return "{}"
-    quarters = [str(r["quarter"])[:10] for r in rows]
-    counts   = [r["n"] for r in rows]
     fig = go.Figure(go.Scatter(
-        x=quarters, y=counts,
+        x=[str(r["quarter"])[:10] for r in rows],
+        y=[r["n"] for r in rows],
         mode="lines+markers",
-        line=dict(color="#6366f1", width=2),
+        line=dict(color=CHART_COLORS["primary"], width=2),
         marker=dict(size=5),
     ))
-    fig.update_layout(
-        title=f"Reports over time (by quarter) — {DRUG_LABELS.get(drug_name, drug_name)}",
-        xaxis_title="Quarter",
-        yaxis_title="Report count",
-        template="plotly_white",
-        height=320,
+    fig.update_layout(**_dark_layout(
+        title=f"Reports over time — {DRUG_LABELS.get(drug_name, drug_name)}",
+        height=300,
         margin=dict(l=60, r=20, t=50, b=40),
-    )
+    ))
+    fig.update_layout(xaxis_title="Quarter", yaxis_title="Reports")
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def chart_comeds(drug_name: str) -> str:
+def chart_comeds(drug_name):
     rows = get_comeds(drug_name)
     if not rows:
         return "{}"
@@ -263,20 +296,18 @@ def chart_comeds(drug_name: str) -> str:
         x=[r["co_occurrences"] for r in rows],
         y=[r["co_drug"] for r in rows],
         orientation="h",
-        marker_color="#10b981",
+        marker_color=CHART_COLORS["secondary"],
     ))
-    fig.update_layout(
+    fig.update_layout(**_dark_layout(
         title=f"Most common co-medications — {DRUG_LABELS.get(drug_name, drug_name)}",
-        xaxis_title="Co-occurrences",
-        yaxis=dict(autorange="reversed"),
-        margin=dict(l=180, r=20, t=50, b=40),
         height=380,
-        template="plotly_white",
-    )
+        margin=dict(l=180, r=20, t=50, b=40),
+    ))
+    fig.update_layout(yaxis=dict(autorange="reversed"))
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def chart_sex_pie(drug_name: str) -> str:
+def chart_sex_pie(drug_name):
     rows = get_sex_distribution(drug_name)
     if not rows:
         return "{}"
@@ -284,47 +315,40 @@ def chart_sex_pie(drug_name: str) -> str:
         labels=[r["sex"] for r in rows],
         values=[r["n"] for r in rows],
         hole=0.4,
-        marker_colors=["#6366f1", "#f59e0b", "#d1d5db"],
+        marker_colors=[CHART_COLORS["primary"], CHART_COLORS["warning"], CHART_COLORS["grid"]],
     ))
-    fig.update_layout(
-        title="Sex distribution",
-        template="plotly_white",
-        height=300,
-        margin=dict(l=20, r=20, t=50, b=20),
-    )
+    fig.update_layout(**_dark_layout(title="Sex distribution", height=300,
+                                      margin=dict(l=20, r=20, t=50, b=20)))
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def chart_heatmap() -> str:
+def chart_heatmap():
     rows = get_reaction_heatmap()
     if not rows:
         return "{}"
     drugs     = sorted(set(r["generic_name"] for r in rows if r["generic_name"]))
     reactions = sorted(set(r["reaction_term"] for r in rows if r["reaction_term"]))
     z = [[0] * len(reactions) for _ in drugs]
-    drug_idx = {d: i for i, d in enumerate(drugs)}
-    rxn_idx  = {rx: j for j, rx in enumerate(reactions)}
+    drug_idx  = {d: i for i, d in enumerate(drugs)}
+    rxn_idx   = {rx: j for j, rx in enumerate(reactions)}
     for r in rows:
         if r["generic_name"] and r["reaction_term"]:
             z[drug_idx[r["generic_name"]]][rxn_idx[r["reaction_term"]]] = r["n"]
     fig = go.Figure(go.Heatmap(
-        z=z,
-        x=reactions,
-        y=drugs,
-        colorscale="Purples",
+        z=z, x=reactions, y=drugs,
+        colorscale=[[0, "#0a0e17"], [0.5, "#0f6e56"], [1, "#00d4aa"]],
         hoverongaps=False,
     ))
-    fig.update_layout(
+    fig.update_layout(**_dark_layout(
         title="Reaction frequency heatmap — all drugs",
-        xaxis=dict(tickangle=-40),
-        margin=dict(l=120, r=20, t=60, b=160),
         height=420,
-        template="plotly_white",
-    )
+        margin=dict(l=120, r=20, t=60, b=160),
+    ))
+    fig.update_layout(xaxis=dict(tickangle=-40))
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def chart_overview_bar() -> str:
+def chart_overview_bar():
     rows = get_report_counts_by_drug()
     if not rows:
         return "{}"
@@ -333,23 +357,20 @@ def chart_overview_bar() -> str:
         name="Total",
         x=[r["generic_name"] for r in rows],
         y=[r["report_count"] for r in rows],
-        marker_color="#c7d2fe",
+        marker_color="#1e3a5f",
     ))
     fig.add_trace(go.Bar(
         name="Serious",
         x=[r["generic_name"] for r in rows],
         y=[r["serious_count"] for r in rows],
-        marker_color="#6366f1",
+        marker_color=CHART_COLORS["primary"],
     ))
-    fig.update_layout(
-        barmode="overlay",
-        title="Report volume by drug (total vs serious)",
-        xaxis_title="Drug",
-        yaxis_title="Report count",
-        template="plotly_white",
+    fig.update_layout(**_dark_layout(
+        title="Report volume by drug — total vs serious",
         height=360,
         margin=dict(l=60, r=20, t=50, b=60),
-    )
+    ))
+    fig.update_layout(barmode="overlay")
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
@@ -358,45 +379,36 @@ def chart_overview_bar() -> str:
 # ------------------------------------------------------------------
 @app.route("/")
 def overview():
-    kpis         = get_kpis()
-    overview_bar = chart_overview_bar()
-    heatmap      = chart_heatmap()
     return render_template(
         "overview.html",
-        kpis=kpis,
-        drugs=DRUGS,
-        drug_labels=DRUG_LABELS,
-        overview_bar=overview_bar,
-        heatmap=heatmap,
+        kpis         = get_kpis(),
+        drugs        = DRUGS,
+        drug_labels  = DRUG_LABELS,
+        overview_bar = chart_overview_bar(),
+        heatmap      = chart_heatmap(),
     )
 
 
 @app.route("/drug/<drug_name>")
-def drug_view(drug_name: str):
+def drug_view(drug_name):
     if drug_name not in DRUGS:
         return "Drug not found", 404
-    kpis        = get_kpis(drug_name)
-    bar_chart   = chart_bar_reactions(drug_name)
-    time_chart  = chart_time_series(drug_name)
-    comed_chart = chart_comeds(drug_name)
-    sex_chart   = chart_sex_pie(drug_name)
     return render_template(
         "drug.html",
-        drug=drug_name,
-        label=DRUG_LABELS.get(drug_name, drug_name),
-        drugs=DRUGS,
-        drug_labels=DRUG_LABELS,
-        kpis=kpis,
-        bar_chart=bar_chart,
-        time_chart=time_chart,
-        comed_chart=comed_chart,
-        sex_chart=sex_chart,
+        drug        = drug_name,
+        label       = DRUG_LABELS.get(drug_name, drug_name),
+        drugs       = DRUGS,
+        drug_labels = DRUG_LABELS,
+        kpis        = get_kpis(drug_name),
+        bar_chart   = chart_bar_reactions(drug_name),
+        time_chart  = chart_time_series(drug_name),
+        comed_chart = chart_comeds(drug_name),
+        sex_chart   = chart_sex_pie(drug_name),
     )
 
 
 @app.route("/api/data/<drug_name>")
-def api_data(drug_name: str):
-    """JSON endpoint — handy for testing queries or future front-end work."""
+def api_data(drug_name):
     if drug_name not in DRUGS:
         return jsonify({"error": "drug not found"}), 404
     return jsonify({
@@ -407,5 +419,17 @@ def api_data(drug_name: str):
     })
 
 
+@app.route("/health")
+def health():
+    """Health check endpoint for Render."""
+    try:
+        conn = get_db()
+        conn.close()
+        return jsonify({"status": "ok", "db": "connected"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 if __name__ == "__main__":
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.run(debug=True, port=5000)
