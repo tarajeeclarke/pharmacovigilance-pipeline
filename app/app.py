@@ -3,14 +3,12 @@ app/app.py
 ----------
 Flask + Plotly dashboard for pharmacovigilance analytics.
 Production-ready for Render + Neon deployment.
-
 Routes:
-  /                  → overview (all drugs, KPI cards)
-  /drug/<name>       → drug-specific deep dive
-  /api/data/<name>   → JSON endpoint for chart data
-  /health            → database health check
+  /                  -> overview (all drugs, KPI cards)
+  /drug/<name>       -> drug-specific deep dive
+  /api/data/<name>   -> JSON endpoint for chart data
+  /health            -> database health check
 """
-
 import os
 import json
 import psycopg2
@@ -50,9 +48,8 @@ CHART_COLORS = {
     "grid":      "rgba(255,180,210,0.08)",
 }
 
-
 # ------------------------------------------------------------------
-# DB connection — supports DATABASE_URL (Neon/Render) or individual vars
+# DB connection
 # ------------------------------------------------------------------
 def get_db():
     database_url = os.getenv("DATABASE_URL")
@@ -74,7 +71,6 @@ def get_db():
         sslmode="require",
     )
 
-
 def query(sql, params=None):
     conn = get_db()
     try:
@@ -83,7 +79,6 @@ def query(sql, params=None):
             return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
-
 
 # ------------------------------------------------------------------
 # Data queries
@@ -110,7 +105,6 @@ def get_kpis(drug_name=None):
     rows = query(sql, params or None)
     return rows[0] if rows else {}
 
-
 def get_report_counts_by_drug():
     return query("""
         SELECT d.generic_name,
@@ -122,7 +116,6 @@ def get_report_counts_by_drug():
         GROUP BY d.generic_name
         ORDER BY report_count DESC
     """)
-
 
 def get_top_reactions(drug_name, limit=15):
     return query("""
@@ -138,7 +131,6 @@ def get_top_reactions(drug_name, limit=15):
         LIMIT %s
     """, (f"%{drug_name}%", f"%{drug_name}%", limit))
 
-
 def get_reports_over_time(drug_name):
     return query("""
         SELECT DATE_TRUNC('quarter', r.receipt_date) AS quarter, COUNT(*) AS n
@@ -150,7 +142,6 @@ def get_reports_over_time(drug_name):
         GROUP BY quarter
         ORDER BY quarter
     """, (f"%{drug_name}%", f"%{drug_name}%"))
-
 
 def get_comeds(drug_name, limit=12):
     return query("""
@@ -166,7 +157,6 @@ def get_comeds(drug_name, limit=12):
         LIMIT %s
     """, (f"%{drug_name}%", f"%{drug_name}%", limit))
 
-
 def get_sex_distribution(drug_name):
     return query("""
         SELECT COALESCE(p.sex, 'unknown') AS sex, COUNT(*) AS n
@@ -177,7 +167,6 @@ def get_sex_distribution(drug_name):
           AND (LOWER(d.generic_name) LIKE %s OR LOWER(d.medicinal_product) LIKE %s)
         GROUP BY p.sex
     """, (f"%{drug_name}%", f"%{drug_name}%"))
-
 
 def get_reaction_heatmap():
     return query("""
@@ -198,150 +187,9 @@ def get_reaction_heatmap():
         GROUP BY d.generic_name, rx.reaction_term
     """)
 
-
 # ------------------------------------------------------------------
-# Chart builders
+# Overview data helpers
 # ------------------------------------------------------------------
-def _dark_layout(title="", height=380, margin=None):
-    return dict(
-        title=dict(text=title, font=dict(color=CHART_COLORS["font"], size=13)),
-        paper_bgcolor=CHART_COLORS["bg"],
-        plot_bgcolor=CHART_COLORS["bg"],
-        font=dict(color=CHART_COLORS["font"], family="DM Mono, monospace", size=11),
-        height=height,
-        margin=margin or dict(l=60, r=20, t=50, b=40),
-        xaxis=dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
-                   zerolinecolor=CHART_COLORS["grid"]),
-        yaxis=dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
-                   zerolinecolor=CHART_COLORS["grid"]),
-    )
-
-
-def chart_bar_reactions(drug_name):
-    rows = get_top_reactions(drug_name)
-    if not rows:
-        return "{}"
-    fig = go.Figure(go.Bar(
-        x=[r["n"] for r in rows],
-        y=[r["reaction_term"] for r in rows],
-        orientation="h",
-        marker_color=CHART_COLORS["primary"],
-    ))
-    fig.update_layout(**_dark_layout(
-        title=f"Top adverse reactions — {DRUG_LABELS.get(drug_name, drug_name)}",
-        height=420, margin=dict(l=220, r=20, t=50, b=40),
-    ))
-    fig.update_layout(yaxis=dict(autorange="reversed"))
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-def chart_time_series(drug_name):
-    rows = get_reports_over_time(drug_name)
-    if not rows:
-        return "{}"
-    fig = go.Figure(go.Scatter(
-        x=[str(r["quarter"])[:10] for r in rows],
-        y=[r["n"] for r in rows],
-        mode="lines+markers",
-        line=dict(color=CHART_COLORS["primary"], width=2),
-        marker=dict(size=5),
-    ))
-    fig.update_layout(**_dark_layout(
-        title=f"Reports over time — {DRUG_LABELS.get(drug_name, drug_name)}",
-        height=300, margin=dict(l=60, r=20, t=50, b=40),
-    ))
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-def chart_comeds(drug_name):
-    rows = get_comeds(drug_name)
-    if not rows:
-        return "{}"
-    fig = go.Figure(go.Bar(
-        x=[r["co_occurrences"] for r in rows],
-        y=[r["co_drug"] for r in rows],
-        orientation="h",
-        marker_color=CHART_COLORS["secondary"],
-    ))
-    fig.update_layout(**_dark_layout(
-        title=f"Most common co-medications — {DRUG_LABELS.get(drug_name, drug_name)}",
-        height=380, margin=dict(l=180, r=20, t=50, b=40),
-    ))
-    fig.update_layout(yaxis=dict(autorange="reversed"))
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-def chart_sex_pie(drug_name):
-    rows = get_sex_distribution(drug_name)
-    if not rows:
-        return "{}"
-    fig = go.Figure(go.Pie(
-        labels=[r["sex"] for r in rows],
-        values=[r["n"] for r in rows],
-        hole=0.4,
-        marker_colors=[CHART_COLORS["primary"], CHART_COLORS["warning"], CHART_COLORS["grid"]],
-    ))
-    fig.update_layout(**_dark_layout(
-        title="Sex distribution", height=300,
-        margin=dict(l=20, r=20, t=50, b=20),
-    ))
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-def chart_heatmap():
-    rows = get_reaction_heatmap()
-    if not rows:
-        return "{}"
-    drugs     = sorted(set(r["generic_name"] for r in rows if r["generic_name"]))
-    reactions = sorted(set(r["reaction_term"] for r in rows if r["reaction_term"]))
-    z = [[0] * len(reactions) for _ in drugs]
-    drug_idx = {d: i for i, d in enumerate(drugs)}
-    rxn_idx  = {rx: j for j, rx in enumerate(reactions)}
-    for r in rows:
-        if r["generic_name"] and r["reaction_term"]:
-            z[drug_idx[r["generic_name"]]][rxn_idx[r["reaction_term"]]] = r["n"]
-    fig = go.Figure(go.Heatmap(
-        z=z, x=reactions, y=drugs,
-        colorscale=[[0, "#0a0e17"], [0.5, "#0f6e56"], [1, "#00d4aa"]],
-        hoverongaps=False,
-    ))
-    fig.update_layout(**_dark_layout(
-        title="Reaction frequency heatmap — all drugs",
-        height=420, margin=dict(l=120, r=20, t=60, b=160),
-    ))
-    fig.update_layout(xaxis=dict(tickangle=-40))
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-def chart_overview_bar():
-    rows = get_report_counts_by_drug()
-    if not rows:
-        return "{}"
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Total",
-        x=[r["generic_name"] for r in rows],
-        y=[r["report_count"] for r in rows],
-        marker_color="#1e3a5f",
-    ))
-    fig.add_trace(go.Bar(
-        name="Serious",
-        x=[r["generic_name"] for r in rows],
-        y=[r["serious_count"] for r in rows],
-        marker_color=CHART_COLORS["primary"],
-    ))
-    fig.update_layout(**_dark_layout(
-        title="Report volume by drug — total vs serious",
-        height=360, margin=dict(l=60, r=20, t=50, b=60),
-    ))
-    fig.update_layout(barmode="overlay")
-    return json.dumps(fig, cls=PlotlyJSONEncoder)
-
-
-# ------------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------------
-@app.route("/")
 def get_drug_summary():
     summary = []
     for slug in DRUGS:
@@ -362,7 +210,6 @@ def get_drug_summary():
         })
     return summary
 
-
 def get_top_drugs(drug_summary, n=5):
     sorted_drugs = sorted(drug_summary, key=lambda x: x["total_reports"], reverse=True)[:n]
     max_count = sorted_drugs[0]["total_reports"] if sorted_drugs else 1
@@ -371,7 +218,6 @@ def get_top_drugs(drug_summary, n=5):
         "count": d["total_reports"],
         "pct":   round(d["total_reports"] / max_count * 100, 1),
     } for d in sorted_drugs]
-
 
 def get_top_reactions_all(limit=10):
     rows = query("""
@@ -392,7 +238,6 @@ def get_top_reactions_all(limit=10):
         "count":    int(r["n"]),
         "pct":      round(r["n"] / total * 100, 2),
     } for r in rows]
-
 
 def get_recent_reports(limit=8):
     rows = query("""
@@ -422,7 +267,93 @@ def get_recent_reports(limit=8):
         "outcome":  r["outcome"].title() if r.get("outcome") else None,
     } for r in rows]
 
+# ------------------------------------------------------------------
+# Chart builders
+# ------------------------------------------------------------------
+def _dark_layout(title="", height=380, margin=None):
+    return dict(
+        title=dict(text=title, font=dict(color=CHART_COLORS["font"], size=13)),
+        paper_bgcolor=CHART_COLORS["bg"],
+        plot_bgcolor=CHART_COLORS["bg"],
+        font=dict(color=CHART_COLORS["font"], family="DM Mono, monospace", size=11),
+        height=height,
+        margin=margin or dict(l=60, r=20, t=50, b=40),
+        xaxis=dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
+                   zerolinecolor=CHART_COLORS["grid"]),
+        yaxis=dict(gridcolor=CHART_COLORS["grid"], linecolor=CHART_COLORS["grid"],
+                   zerolinecolor=CHART_COLORS["grid"]),
+    )
 
+def chart_bar_reactions(drug_name):
+    rows = get_top_reactions(drug_name)
+    if not rows:
+        return "{}"
+    fig = go.Figure(go.Bar(
+        x=[r["n"] for r in rows],
+        y=[r["reaction_term"] for r in rows],
+        orientation="h",
+        marker_color=CHART_COLORS["primary"],
+    ))
+    fig.update_layout(**_dark_layout(
+        title=f"Top adverse reactions — {DRUG_LABELS.get(drug_name, drug_name)}",
+        height=420, margin=dict(l=220, r=20, t=50, b=40),
+    ))
+    fig.update_layout(yaxis=dict(autorange="reversed"))
+    return json.dumps(fig, cls=PlotlyJSONEncoder)
+
+def chart_time_series(drug_name):
+    rows = get_reports_over_time(drug_name)
+    if not rows:
+        return "{}"
+    fig = go.Figure(go.Scatter(
+        x=[str(r["quarter"])[:10] for r in rows],
+        y=[r["n"] for r in rows],
+        mode="lines+markers",
+        line=dict(color=CHART_COLORS["primary"], width=2),
+        marker=dict(size=5),
+    ))
+    fig.update_layout(**_dark_layout(
+        title=f"Reports over time — {DRUG_LABELS.get(drug_name, drug_name)}",
+        height=300, margin=dict(l=60, r=20, t=50, b=40),
+    ))
+    return json.dumps(fig, cls=PlotlyJSONEncoder)
+
+def chart_comeds(drug_name):
+    rows = get_comeds(drug_name)
+    if not rows:
+        return "{}"
+    fig = go.Figure(go.Bar(
+        x=[r["co_occurrences"] for r in rows],
+        y=[r["co_drug"] for r in rows],
+        orientation="h",
+        marker_color=CHART_COLORS["secondary"],
+    ))
+    fig.update_layout(**_dark_layout(
+        title=f"Most common co-medications — {DRUG_LABELS.get(drug_name, drug_name)}",
+        height=380, margin=dict(l=180, r=20, t=50, b=40),
+    ))
+    fig.update_layout(yaxis=dict(autorange="reversed"))
+    return json.dumps(fig, cls=PlotlyJSONEncoder)
+
+def chart_sex_pie(drug_name):
+    rows = get_sex_distribution(drug_name)
+    if not rows:
+        return "{}"
+    fig = go.Figure(go.Pie(
+        labels=[r["sex"] for r in rows],
+        values=[r["n"] for r in rows],
+        hole=0.4,
+        marker_colors=[CHART_COLORS["primary"], CHART_COLORS["warning"], CHART_COLORS["grid"]],
+    ))
+    fig.update_layout(**_dark_layout(
+        title="Sex distribution", height=300,
+        margin=dict(l=20, r=20, t=50, b=20),
+    ))
+    return json.dumps(fig, cls=PlotlyJSONEncoder)
+
+# ------------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------------
 @app.route("/")
 def overview():
     drug_summary   = get_drug_summary()
@@ -439,7 +370,6 @@ def overview():
         top_reactions=top_reactions,
         recent_reports=recent_reports,
     )
-
 
 @app.route("/drug/<drug_name>")
 def drug_view(drug_name):
@@ -458,7 +388,6 @@ def drug_view(drug_name):
         sex_chart=chart_sex_pie(drug_name),
     )
 
-
 @app.route("/api/data/<drug_name>")
 def api_data(drug_name):
     if drug_name not in DRUGS:
@@ -470,7 +399,6 @@ def api_data(drug_name):
         "timeline":  get_reports_over_time(drug_name),
     })
 
-
 @app.route("/health")
 def health():
     try:
@@ -479,7 +407,6 @@ def health():
         return jsonify({"status": "ok", "db": "connected"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
