@@ -246,12 +246,10 @@ def get_recent_reports(limit=8):
             rx.reaction_term     AS reaction,
             r.receipt_date       AS date,
             r.serious            AS serious,
-            r.serious_death      AS fatal,
-            p.patient_outcome    AS outcome
+            r.serious_death      AS fatal
         FROM reports r
         JOIN drugs d      ON d.report_id = r.id AND d.drug_role = '1'
         JOIN reactions rx ON rx.report_id = r.id
-        LEFT JOIN patients p ON p.report_id = r.id
         WHERE r.receipt_date IS NOT NULL
           AND rx.reaction_term IS NOT NULL
           AND d.medicinal_product IS NOT NULL
@@ -264,9 +262,8 @@ def get_recent_reports(limit=8):
         "date":     str(r["date"])[:10] if r["date"] else "—",
         "serious":  bool(r["serious"]),
         "fatal":    bool(r["fatal"]),
-        "outcome":  r["outcome"].title() if r.get("outcome") else None,
+        "outcome":  None,
     } for r in rows]
-
 # ------------------------------------------------------------------
 # Chart builders
 # ------------------------------------------------------------------
