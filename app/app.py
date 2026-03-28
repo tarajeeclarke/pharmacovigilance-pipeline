@@ -71,6 +71,7 @@ def get_db():
         dbname=os.getenv("DB_NAME", "pharmacovigilance"),
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
+        sslmode="require",
     )
 
 
